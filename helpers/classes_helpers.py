@@ -13,6 +13,40 @@ def classes_list_sorter(entry_in):
     return (name)
 
 
+TRAIT_NAMES = ['Role', 'Power Source', 'Key Abilities', 'Armor Proficiencies', 'Weapon Proficiencies',
+               'Implement', 'Bonus to Defense', 'Hit Points at 1st Level', 'Hit Points per Level Gained',
+               'Healing Surges per Day', 'Trained Skills', 'Extra Trained Skill']
+
+
+def create_traits(traits_in, classskilllist=None):
+    traits_out = ''
+
+    if len(traits_in) == 0:
+        return traits_out
+
+    for trait in traits_in:
+        trait_lower = re.sub('[^a-zA-Z0-9_]', '', trait["name"]).lower()
+
+        traits_out += f'\t\t\t\t\t<{trait_lower}>\n'
+        traits_out += f'\t\t\t\t\t\t<name type="string">{trait["name"]}</name>\n'
+        if trait["name"] == "Hit Points per Level Gained":
+            traits_out += f'\t\t\t\t\t\t<text type="number">{trait["text"]}</text>\n'
+        else:
+            traits_out += f'\t\t\t\t\t\t<text type="string">{trait["text"]}</text>\n'
+        traits_out += f'\t\t\t\t\t</{trait_lower}>\n'
+
+        if trait["name"] == "Trained Skills" and classskilllist:
+            traits_out += '\t\t\t\t\t<classskilllist>\n'
+            for idx, skill in enumerate(classskilllist, start=1):
+                traits_out += f'\t\t\t\t\t\t<id-{idx:0>5}>\n'
+                traits_out += f'\t\t\t\t\t\t\t<name type="string">{skill["name"]}</name>\n'
+                traits_out += f'\t\t\t\t\t\t\t<statname type="string">{skill["statname"]}</statname>\n'
+                traits_out += f'\t\t\t\t\t\t</id-{idx:0>5}>\n'
+            traits_out += '\t\t\t\t\t</classskilllist>\n'
+
+    return traits_out
+
+
 def create_classes_library():
     xml_out = ''
 
@@ -66,7 +100,7 @@ def create_classes_cards(list_in):
     featuredesc_out = ''
 
     if not list_in:
-        return xml_out
+        return classes_out, featuredesc_out
 
     # Create individual item entries
     classes_out += ('\t\t<classes>\n')
@@ -85,6 +119,8 @@ def create_classes_cards(list_in):
             classes_out += f'{classes_dict["published"]}'
 #        xml_out += (f'\t\t\t\t<shortdescription type="string">{classes_dict["shortdescription"]}</shortdescription>\n')
         classes_out += f'\n\t\t\t\t</description>\n'
+        if classes_dict["traits"] != '':
+            classes_out += f'\t\t\t\t<traits>\n{classes_dict["traits"]}\t\t\t\t</traits>\n'
         classes_out += f'\t\t\t\t<name type="string">{classes_dict["name"]}</name>\n'
         classes_out += '\t\t\t\t<source type="string">Class</source>\n'
         classes_out += f'\t\t\t</{name_lower}>\n'
@@ -151,6 +187,7 @@ def extract_classes_db(db_in):
         powers_str = ''
         published_str = ''
         shortdescription_str = ''
+        traits_str = ''
         
         # Published In
         published_tag = parsed_html.find(class_='publishedIn').extract()
@@ -166,25 +203,44 @@ def extract_classes_db(db_in):
 
         # Traits
         # these are the elements common to all Classes
+        traits_list = []
         if trait_block := parsed_html.select_one('.flavor > blockquote'):
             # loop through the <b> elements as they are the headings
             for b in trait_block.find_all('b'):
-                if re.sub('\s*:\s*$', '', b.text) in ['Role', 'Power Source', 'Key Abilities', 'Armor Proficiencies', 'Weapon Proficiencies', 'Implement',\
-                                                   'Bonus to Defense', 'Hit Points at 1st Level', 'Hit Points per Level Gained', 'Healing Surges per Day',\
-                                                   'Trained Skills', 'Extra Trained Skill', 'Build Options', 'Class features', 'Hybrid Talent Options']:
+                trait_name = re.sub('\s*:\s*$', '', b.text)
+                if trait_name in TRAIT_NAMES + ['Build Options', 'Class features', 'Hybrid Talent Options']:
                     # start a <p> with the heading value
                     description_str += '<p>' + str(b)
+                    trait_text_parts = []
                     # keep grabbing fields for the description until we hit the next <b>
                     for tag in b.next_siblings:
                         if tag.name == 'b':
                             break
                         else:
                             description_str += str(tag)
+                            if trait_name in TRAIT_NAMES:
+                                trait_text_parts.append(str(tag))
                     description_str += '</p>\n'
                     # turn <br/> into new <p> as line breaks inside <p> don't render in formattedtext
                     description_str = re.sub(r'(^\s*<br/>|<br/>\s*$)', r'', description_str)
                     # get rid of empty paragraphs
                     description_str = description_str.replace('<p></p>', '')
+                    if trait_name in TRAIT_NAMES:
+                        trait_text = ''.join(trait_text_parts).lstrip(': ').strip()
+                        traits_list.append({'name': trait_name, 'text': trait_text})
+
+        # Class Skills list (parsed from the "Class Skills:" paragraph)
+        classskills_list = []
+        class_skills_tag = parsed_html.find('i', string=re.compile(r'Class Skills'))
+        if class_skills_tag:
+            skills_text = ''
+            for sibling in class_skills_tag.next_siblings:
+                skills_text += str(sibling)
+            skills_text = skills_text.lstrip(': ').rstrip('.')
+            for match in re.finditer(r'([^,(]+?)\s*\((\w+)\)', skills_text):
+                classskills_list.append({'name': match.group(1).strip(), 'statname': match.group(2).strip()})
+
+        traits_str = create_traits(traits_list, classskills_list)
 
         # Description
         if desc_block := parsed_html.find('p', class_='flavor'):
@@ -291,6 +347,7 @@ def extract_classes_db(db_in):
         export_dict["powers"] = powers_str
         export_dict["published"] = published_str
         export_dict["shortdescription"] = shortdescription_str
+        export_dict["traits"] = traits_str
 
         # Append a copy of generated item dictionary
         classes_out.append(copy.deepcopy(export_dict))

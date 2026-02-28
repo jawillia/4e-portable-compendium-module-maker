@@ -167,3 +167,6 @@ GitHub.sublime-settings
 
 #Python Environment Files
 module-maker/
+
+#Claude
+CLAUDE.md
